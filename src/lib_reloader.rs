@@ -58,6 +58,10 @@ impl LibReloader {
         lib_name: impl AsRef<str>,
         file_watch_debounce: Option<Duration>,
     ) -> Result<Self, HotReloaderError> {
+        
+        // 感觉用不上，暂时注释
+        // compromise::register!();
+        // compromise::set_hot_reload_enabled(true);
         // find the target dir in which the build is happening and where we should find
         // the library
         let lib_dir = find_file_or_dir_in_parent_directories(lib_dir.as_ref())?;

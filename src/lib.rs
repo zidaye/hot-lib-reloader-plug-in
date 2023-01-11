@@ -101,7 +101,7 @@ exported by the library:
 ```ignore
 // The value of `dylib = "..."` should be the library containing the hot-reloadable functions
 // It should normally be the crate name of your sub-crate.
-#[hot_lib_reloader::hot_module(dylib = "lib")]
+#[hot_lib_reloader_plug_in::hot_module(dylib = "lib")]
 mod hot_lib {
     // Reads public no_mangle functions from lib.rs and  generates hot-reloadable
     // wrapper functions with the same signature inside this module.
@@ -178,13 +178,13 @@ To continue with the example above, let's say instead of running the library fun
 In order to do that, we first need to get hold of the `LibReloadObserver`. For that we can expose a function `subscribe()` that is annotated with the `#[lib_change_subscription]` (that attribute tells the `hot_module` macro to provide an implementation for it):
 
 ```ignore
-#[hot_lib_reloader::hot_module(dylib = "lib")]
+#[hot_lib_reloader_plug_in::hot_module(dylib = "lib")]
 mod hot_lib {
     /* code from above */
 
     // expose a type to subscribe to lib load events
     #[lib_change_subscription]
-    pub fn subscribe() -> hot_lib_reloader::LibReloadObserver {}
+    pub fn subscribe() -> hot_lib_reloader_plug_in::LibReloadObserver {}
 }
 ```
 
@@ -210,7 +210,7 @@ How to block reload to do serialization / deserialization is shown in the [reloa
 To just figure out if the library has changed, a simple test function can be exposed:
 
 ```ignore
-#[hot_lib_reloader::hot_module(dylib = "lib")]
+#[hot_lib_reloader_plug_in::hot_module(dylib = "lib")]
 mod hot_lib {
     /* ... */
     #[lib_updated]
@@ -278,7 +278,7 @@ use hot_lib::*;
 use lib::*;
 
 #[cfg(feature = "reload")]
-#[hot_lib_reloader::hot_module(dylib = "lib")]
+#[hot_lib_reloader_plug_in::hot_module(dylib = "lib")]
 mod hot_lib { /*...*/ }
 ```
 
@@ -297,7 +297,7 @@ If you want to iterate on state while developing you have the option to serializ
 Here is an example where we crate a state container that has an inner `serde_json::Value`:
 
 ```ignore
-#[hot_lib_reloader::hot_module(dylib = "lib")]
+#[hot_lib_reloader_plug_in::hot_module(dylib = "lib")]
 mod hot_lib {
     pub use lib::State;
     hot_functions_from_file!("lib/src/lib.rs");
@@ -375,7 +375,7 @@ So by specifying `#[hot_module(dylib = "lib")]` and building with debug settings
 If the library should be loaded from a different location you can specify this by setting the `lib_dir` attribute like:
 
 ```ignore
-#[hot_lib_reloader::hot_module(
+#[hot_lib_reloader_plug_in::hot_module(
     dylib = "lib",
     lib_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug")
 )]
@@ -390,7 +390,7 @@ mod hot_lib {
 If your `hot_module` gives you a strange compilation error, try `cargo expand` to see what code is generated.
 
 By default the `hot-lib-reloader` crate won't write to stdout or stderr but it logs what it does with info, debug, and trace log levels using the [log crate](https://crates.io/crates/log).
-Depending on what logging framework you use (e.g. [env_logger](https://crates.io/crates/env_logger)), you can enable those logs by setting a `RUST_LOG` filter like `RUST_LOG=hot_lib_reloader=trace`.
+Depending on what logging framework you use (e.g. [env_logger](https://crates.io/crates/env_logger)), you can enable those logs by setting a `RUST_LOG` filter like `RUST_LOG=hot_lib_reloader_plug_in=trace`.
 
 
 # Examples
@@ -436,8 +436,9 @@ mod log;
 
 #[cfg(target_os = "macos")]
 mod codesign;
-
+extern crate compromise;
 pub use error::HotReloaderError;
 pub use hot_lib_reloader_macro::{define_lib_reloader, hot_module};
 pub use lib_reload_events::{BlockReload, ChangedEvent, LibReloadNotifier, LibReloadObserver};
 pub use lib_reloader::LibReloader;
+

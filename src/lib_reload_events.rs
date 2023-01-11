@@ -61,7 +61,7 @@ impl Drop for BlockReload {
 /// #[hot_module(dylib = "lib")]
 /// mod hot_lib {
 ///     #[lib_change_subscription]
-///     pub fn subscribe() -> hot_lib_reloader::LibReloadObserver { }
+///     pub fn subscribe() -> hot_lib_reloader_plug_in::LibReloadObserver { }
 /// }
 ///
 /// fn test() {
