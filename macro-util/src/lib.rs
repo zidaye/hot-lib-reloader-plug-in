@@ -92,5 +92,7 @@ pub fn hot_module(
     let args = syn::parse_macro_input!(args as hot_module::HotModuleAttribute);
     let mut module = syn::parse_macro_input!(item as hot_module::HotModule);
     module.hot_module_args = Some(args);
+    // let output = (quote::quote! { #module }).to_string();
+    //eprintln!("{}",output);
     (quote::quote! { #module }).into()
 }

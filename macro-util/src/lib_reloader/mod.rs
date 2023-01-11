@@ -93,8 +93,6 @@ impl PendingLibReloaderDefinition {
 
         let struct_def = generate_lib_reloader_struct(name, lib_dir, lib_name, lib_functions)?;
 
-        Ok(LibReloaderDefinition {
-            struct_def,
-        })
+        Ok(LibReloaderDefinition { struct_def })
     }
 }

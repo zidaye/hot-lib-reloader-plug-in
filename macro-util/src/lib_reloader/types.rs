@@ -1,6 +1,6 @@
 use proc_macro2::Span;
+use syn::Ident;
 use syn::{ForeignItemFn, LitStr};
-use syn::{Ident};
 
 pub(crate) struct LibReloaderDefinition {
     pub(crate) struct_def: proc_macro2::TokenStream,

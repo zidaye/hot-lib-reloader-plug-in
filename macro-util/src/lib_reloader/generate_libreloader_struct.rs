@@ -1,10 +1,10 @@
 use proc_macro2::{Span, TokenStream};
 use syn::{
-    parse_quote, token, FnArg, ForeignItemFn, Ident, ImplItemMethod, LitByteStr, LitStr, Receiver,
-    Result, VisPublic, Visibility,
+    parse_quote, token, FnArg, ForeignItemFn, Ident, ImplItemMethod,
+    LitByteStr, LitStr, Receiver, Result, VisPublic, Visibility,
 };
 
-use crate::util::ident_from_pat;
+use crate::util::{get_lib_name_by_attr_args, ident_from_pat};
 
 pub fn generate_lib_reloader_struct(
     name: Ident,
@@ -63,6 +63,17 @@ fn generate_impl_method_to_call_lib_function(
         LitByteStr::new(&symbol_name, Span::call_site())
     };
 
+    let current_lib_name = if let Some(attr) =
+        attrs.iter().find(|attr| attr.path.is_ident("hot_function"))
+    {
+        get_lib_name_by_attr_args(span.clone(), attr, &sig.ident.to_string())?
+    } else {
+        return Err(syn::Error::new(
+            span,
+            format!("generating call for library function: signature of function {} No library file specified", sig.ident),
+        ));
+    };
+
     let ret_type = &sig.output;
 
     let err_msg = LitStr::new(
@@ -90,7 +101,7 @@ fn generate_impl_method_to_call_lib_function(
         {
             unsafe {
                 let f = self.lib_loader
-                    .get_symbol::<fn( #( #input_types ),* ) #ret_type >(#symbol_name)
+                    .get_symbol::<fn( #( #input_types ),* ) #ret_type >(#current_lib_name, #symbol_name)
                     .expect(#err_msg);
                 f(#( #input_names),* )
             }

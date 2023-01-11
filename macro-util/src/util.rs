@@ -1,6 +1,6 @@
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenTree};
 use std::path::PathBuf;
-use syn::{Error, ForeignItemFn, LitStr, Result};
+use syn::{Attribute, Error, ForeignItemFn, LitStr, Result};
 
 pub fn ident_from_pat(
     pat: &syn::Pat,
@@ -75,4 +75,53 @@ pub fn read_functions_from_file(
     }
 
     Ok(functions)
+}
+
+pub fn get_lib_name_by_attr_args(span: Span, attr: &Attribute, func_name: &str) -> Result<String> {
+    let mut tokens = attr.tokens.clone().into_iter();
+    if let Some(token) = tokens.next() {
+        if let proc_macro2::TokenTree::Group(group) = token {
+            let mut args_token = group.stream().into_iter();
+            // x = "Y"
+            match (args_token.next(), args_token.next(), args_token.next()) {
+                (Some(args_name), Some(punct), Some(args_value)) => {
+                    let match_token_tree = |token_tree: &TokenTree| -> Result<String> {
+                        match token_tree {
+                            TokenTree::Ident(ident) => Ok(ident.to_string()),
+                            TokenTree::Punct(punct) => Ok(punct.to_string()),
+                            TokenTree::Literal(lit_str) => Ok(lit_str.to_string()),
+                            _ => {
+                                return Err(syn::Error::new(
+                                        span,
+                                        format!("generating call for library function: signature of function {func_name} No find library file specified path"),
+                                    ));
+                            }
+                        }
+                    };
+                    let args_name = match_token_tree(&args_name)?;
+                    let punct = match_token_tree(&punct)?;
+                    let args_value = match_token_tree(&args_value)?;
+                    let args_value = args_value.trim_end_matches('"').trim_start_matches('"');
+
+                    if args_name == "lib_name" && punct == "=" {
+                        // sort out os dependent file name
+                        #[cfg(target_os = "macos")]
+                        let (prefix, ext) = ("lib", "dylib");
+                        #[cfg(target_os = "linux")]
+                        let (prefix, _) = ("lib", "so");
+                        #[cfg(target_os = "windows")]
+                        let (prefix, ext) = ("", "dll");
+
+                        let lib_name = format!("{prefix}{args_value}");
+                        return Ok(lib_name);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Err(syn::Error::new(
+            span,
+            format!("generating call for library function: signature of function {func_name} No find library file specified path"),
+        ))
 }

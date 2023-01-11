@@ -1,6 +1,4 @@
-use syn::{
-    braced, bracketed, parse::ParseBuffer, spanned::Spanned, ForeignItemFn, LitStr, Result,
-};
+use syn::{braced, bracketed, parse::ParseBuffer, spanned::Spanned, ForeignItemFn, LitStr, Result};
 
 use crate::util::read_functions_from_file;
 

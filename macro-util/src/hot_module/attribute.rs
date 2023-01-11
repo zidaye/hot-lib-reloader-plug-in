@@ -3,7 +3,7 @@ use syn::{
 };
 
 pub(crate) struct HotModuleAttribute {
-    pub(crate) lib_name: syn::Expr,
+    pub(crate) lib_names: syn::Expr,
     pub(crate) lib_dir: syn::Expr,
     pub(crate) file_watch_debounce_ms: syn::LitInt,
 }
@@ -11,7 +11,7 @@ pub(crate) struct HotModuleAttribute {
 // Parses something like `#[hot(name = "lib")]`.
 impl syn::parse::Parse for HotModuleAttribute {
     fn parse(stream: syn::parse::ParseStream) -> Result<Self> {
-        let mut lib_name = None;
+        let mut lib_names = None;
         let mut lib_dir = None;
         let mut file_watch_debounce_ms = None;
 
@@ -40,7 +40,7 @@ impl syn::parse::Parse for HotModuleAttribute {
                     }
 
                     expr if expr_is_ident(&left, "dylib") => {
-                        lib_name = Some(expr);
+                        lib_names = Some(expr);
                         continue;
                     }
 
@@ -56,7 +56,7 @@ impl syn::parse::Parse for HotModuleAttribute {
             }
         }
 
-        let lib_name = match lib_name {
+        let lib_names = match lib_names {
             None => {
                 return Err(Error::new(
                     stream.span(),
@@ -83,7 +83,7 @@ impl syn::parse::Parse for HotModuleAttribute {
         };
 
         Ok(HotModuleAttribute {
-            lib_name,
+            lib_names,
             lib_dir,
             file_watch_debounce_ms,
         })

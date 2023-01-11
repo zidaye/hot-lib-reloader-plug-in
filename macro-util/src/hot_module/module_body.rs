@@ -169,7 +169,7 @@ impl syn::parse::Parse for HotModule {
                 {
                     let span = func.span();
                     let f = ForeignItemFn {
-                        attrs: Vec::new(),
+                        attrs: func.attrs,
                         vis: func.vis,
                         sig: func.sig,
                         semi_token: token::Semi::default(),
@@ -231,7 +231,7 @@ impl quote::ToTokens for HotModule {
         } = self;
 
         let HotModuleAttribute {
-            lib_name,
+            lib_names,
             lib_dir,
             file_watch_debounce_ms,
         } = match hot_module_args {
@@ -240,7 +240,7 @@ impl quote::ToTokens for HotModule {
         };
 
         let lib_loader =
-            generate_lib_loader_items(lib_dir, lib_name, file_watch_debounce_ms, tokens.span())
+            generate_lib_loader_items(lib_dir, lib_names, file_watch_debounce_ms, tokens.span())
                 .expect("error generating hot lib loader helpers");
 
         let module_def = quote::quote! {
@@ -250,7 +250,6 @@ impl quote::ToTokens for HotModule {
                 #lib_loader
             }
         };
-
         proc_macro2::TokenStream::extend(tokens, module_def);
     }
 }

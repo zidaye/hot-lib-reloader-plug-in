@@ -1,17 +1,17 @@
+use crate::util::{get_lib_name_by_attr_args, ident_from_pat};
 use proc_macro2::Span;
-use syn::{token, Expr, FnArg, ItemFn, LitByteStr, LitStr, Result, VisPublic, Visibility};
+use syn::{
+    token, Expr, FnArg, ItemFn, LitByteStr, LitStr, Result, VisPublic, Visibility,
+};
 use syn::{ForeignItemFn, LitInt};
-use crate::util::ident_from_pat;
-
 pub(crate) fn generate_lib_loader_items(
     lib_dir: &Expr,
     lib_name: &Expr,
     file_watch_debounce_ms: &LitInt,
     span: Span,
 ) -> Result<proc_macro2::TokenStream> {
-    
     let result = quote::quote_spanned! {span=>
-        
+
         static mut LIB_CHANGE_NOTIFIER: Option<::std::sync::Arc<::std::sync::RwLock<::hot_lib_reloader_plug_in::LibReloadNotifier>>> = None;
         static LIB_CHANGE_NOTIFIER_INIT: ::std::sync::Once = ::std::sync::Once::new();
 
@@ -49,7 +49,7 @@ pub(crate) fn generate_lib_loader_items(
         static WAS_UPDATED: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(false);
 
         fn __lib_loader() -> ::std::sync::Arc<::std::sync::RwLock<::hot_lib_reloader_plug_in::LibReloader>> {
-            
+
             LIB_LOADER_INIT.call_once(|| {
                 let mut lib_loader = ::hot_lib_reloader_plug_in::LibReloader::new(#lib_dir, #lib_name, Some(::std::time::Duration::from_millis(#file_watch_debounce_ms)))
                     .expect("failed to create hot reload loader");
@@ -61,7 +61,7 @@ pub(crate) fn generate_lib_loader_items(
                 // update thread that triggers the dylib to be actually updated
                 let _thread = ::std::thread::spawn(move || {
                     loop {
-                        if let Ok(()) = change_rx.recv() {
+                        if let Ok(current_lib_name) = change_rx.recv() {
                             // inform subscribers about about-to-reload
                             __lib_notifier()
                                 .read()
@@ -76,7 +76,7 @@ pub(crate) fn generate_lib_loader_items(
                                         let duration: ::std::time::Duration = first_lock_attempt - ::std::time::Instant::now();
                                         ::hot_lib_reloader_plug_in::LibReloader::log_info(&format!("...got write lock after {}ms!", duration.as_millis()));
                                     }
-                                    let _ = !lib_loader.update().expect("hot lib update()");
+                                    let _ = !lib_loader.update(current_lib_name).expect("hot lib update()");
                                     break;
                                 }
                                 if first_lock_attempt.is_none() {
@@ -120,11 +120,24 @@ pub(crate) fn gen_hot_module_function_for(
     lib_function: ForeignItemFn,
     span: Span,
 ) -> Result<ItemFn> {
-    let ForeignItemFn { sig, .. } = lib_function;
+    let ForeignItemFn { sig, attrs, .. } = lib_function;
 
     // the symbol inside the library we call needs to be a byte string
     // ending with a nul byte.
     let fun_ident = &sig.ident;
+
+    let current_lib_name = if let Some(attr) =
+        attrs.iter().find(|attr| attr.path.is_ident("hot_function"))
+    {
+        get_lib_name_by_attr_args(span.clone(), attr, &fun_ident.to_string())?
+    } else {
+        return Err(syn::Error::new(
+            span,
+            format!("generating call for library function: signature of function {fun_ident} No library file specified"),
+        ));
+    };
+
+    eprintln!("加载当前库名称: {current_lib_name}");
 
     let symbol_name = {
         let mut symbol_name = fun_ident.to_string().into_bytes();
@@ -161,7 +174,7 @@ pub(crate) fn gen_hot_module_function_for(
             let lib_loader = lib_loader.read().expect("lib loader RwLock read failed");
             let sym = unsafe {
                 lib_loader
-                    .get_symbol::<fn( #( #input_types ),* ) #ret_type >(#symbol_name)
+                    .get_symbol::<fn( #( #input_types ),* ) #ret_type >(#current_lib_name, #symbol_name)
                     .expect(#err_msg_load_symbol)
             };
             sym( #( #input_names ),* )
