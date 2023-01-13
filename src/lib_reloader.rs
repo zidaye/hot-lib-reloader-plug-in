@@ -351,7 +351,7 @@ impl LibReloader {
         lib_name: impl AsRef<str>,
         name: &[u8],
     ) -> Result<Symbol<T>, HotReloaderError> {
-        eprintln!("hot_reload, 库名称： {}", lib_name.as_ref());
+        log::trace!("Call function with get_symbol: {:?}, lib name: {}", String::from_utf8(name.to_vec()).map_err(|e| HotReloaderError::LibraryloadAccidentError(e.to_string())), lib_name.as_ref());
         let specify_ilb = self.lib.get(lib_name.as_ref());
         match specify_ilb {
             None => Err(HotReloaderError::LibraryNotLoaded),

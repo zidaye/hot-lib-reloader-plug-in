@@ -8,4 +8,6 @@ pub enum HotReloaderError {
     LibraryLoadError(#[from] libloading::Error),
     #[error("The hot reloadable library has not been loaded. Has it not been built yet?")]
     LibraryNotLoaded,
+    #[error("Library load find accident error: {0}")]
+    LibraryloadAccidentError(String),
 }

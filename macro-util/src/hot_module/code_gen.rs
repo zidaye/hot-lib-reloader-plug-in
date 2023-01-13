@@ -137,8 +137,6 @@ pub(crate) fn gen_hot_module_function_for(
         ));
     };
 
-    eprintln!("加载当前库名称: {current_lib_name}");
-
     let symbol_name = {
         let mut symbol_name = fun_ident.to_string().into_bytes();
         symbol_name.push(b'\0');
@@ -167,7 +165,6 @@ pub(crate) fn gen_hot_module_function_for(
         &format!("Cannot load library function {}", sig.ident),
         Span::call_site(),
     );
-
     let block = syn::parse_quote! {
         {
             let lib_loader = __lib_loader();
