@@ -29,13 +29,13 @@ pub fn define_lib_reloader(input: proc_macro::TokenStream) -> proc_macro::TokenS
 /// accompanies that will do several things:
 ///
 /// 1. In the context of that module a global
-/// [`hot_lib_reloader_plug_in::LibReloader`](https://docs.rs/hot-lib-reloader/latest/hot_lib_reloader_plug_in/struct.LibReloader.html)
+/// [`hot_lib_reloader_plug_in::HotLoadingManager`](https://docs.rs/hot-lib-reloader/latest/hot_lib_reloader_plug_in/struct.HotLoadingManager.html)
 /// instance is maintained that loads the library specified by the `dylib`
 /// argument and provides access to its symbols.
 ///
-/// 2. A thread is started that drives the `LibReloader`: It waits for library
+/// 2. A thread is started that drives the `HotLoadingManager`: It waits for library
 /// file changes and then
-/// [updates](https://docs.rs/hot-lib-reloader/latest/hot_lib_reloader_plug_in/struct.LibReloader.html#method.update)
+/// [updates](https://docs.rs/hot-lib-reloader/latest/hot_lib_reloader_plug_in/struct.HotLoadingManager.html#method.update)
 /// the library.
 ///
 /// 3. Allows access to a

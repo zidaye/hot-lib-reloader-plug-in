@@ -1,8 +1,6 @@
 use crate::util::{get_lib_name_by_attr_args, ident_from_pat};
 use proc_macro2::Span;
-use syn::{
-    token, Expr, FnArg, ItemFn, LitByteStr, LitStr, Result, VisPublic, Visibility,
-};
+use syn::{token, Expr, FnArg, ItemFn, LitByteStr, LitStr, Result, VisPublic, Visibility};
 use syn::{ForeignItemFn, LitInt};
 pub(crate) fn generate_lib_loader_items(
     lib_dir: &Expr,
@@ -40,7 +38,7 @@ pub(crate) fn generate_lib_loader_items(
                 .subscribe()
         }
 
-        static mut LIB_LOADER: Option<::std::sync::Arc<::std::sync::RwLock<::hot_lib_reloader_plug_in::LibReloader>>> = None;
+        static mut LIB_LOADER: Option<::std::sync::Arc<::std::sync::Mutex<HotLoadingManager>>> = None;
         static LIB_LOADER_INIT: ::std::sync::Once = ::std::sync::Once::new();
 
         // version counter that counts the reloads
@@ -48,14 +46,14 @@ pub(crate) fn generate_lib_loader_items(
         // for simple queries
         static WAS_UPDATED: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(false);
 
-        fn __lib_loader() -> ::std::sync::Arc<::std::sync::RwLock<::hot_lib_reloader_plug_in::LibReloader>> {
+        fn __lib_loader() -> ::std::sync::Arc<::std::sync::Mutex<HotLoadingManager>> {
 
             LIB_LOADER_INIT.call_once(|| {
-                let mut lib_loader = ::hot_lib_reloader_plug_in::LibReloader::new(#lib_dir, #lib_name, Some(::std::time::Duration::from_millis(#file_watch_debounce_ms)))
+                let mut lib_loader = HotLoadingManager::new(#lib_dir, #lib_name, Some(::std::time::Duration::from_millis(#file_watch_debounce_ms)))
                     .expect("failed to create hot reload loader");
 
                 let change_rx = lib_loader.subscribe_to_file_changes();
-                let lib_loader = ::std::sync::Arc::new(::std::sync::RwLock::new(lib_loader));
+                let lib_loader = ::std::sync::Arc::new(::std::sync::Mutex::new(lib_loader));
                 let lib_loader_for_update = lib_loader.clone();
 
                 // update thread that triggers the dylib to be actually updated
@@ -71,17 +69,17 @@ pub(crate) fn generate_lib_loader_items(
                             // get lock to lib_loader, make sure to not deadlock on it here
                             let mut first_lock_attempt = None;
                             loop {
-                                if let Ok(mut lib_loader) = lib_loader_for_update.try_write() {
+                                if let Ok(mut lib_loader) = lib_loader_for_update.try_lock() {
                                     if let Some(first_lock_attempt) = first_lock_attempt {
                                         let duration: ::std::time::Duration = first_lock_attempt - ::std::time::Instant::now();
-                                        ::hot_lib_reloader_plug_in::LibReloader::log_info(&format!("...got write lock after {}ms!", duration.as_millis()));
+                                        HotLoadingManager::log_info(&format!("...got write lock after {}ms!", duration.as_millis()));
                                     }
                                     let _ = !lib_loader.update(current_lib_name).expect("hot lib update()");
                                     break;
                                 }
                                 if first_lock_attempt.is_none() {
                                     first_lock_attempt = Some(::std::time::Instant::now());
-                                    ::hot_lib_reloader_plug_in::LibReloader::log_info("trying to get a write lock...");
+                                    HotLoadingManager::log_info("trying to get a write lock...");
                                 }
                                 ::std::thread::sleep(::std::time::Duration::from_millis(1));
                             }

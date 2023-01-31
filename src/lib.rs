@@ -427,17 +427,13 @@ If you can, don't use `hot-lib-reloader` in combination with `tracing`.
 
 */
 
-mod error;
 mod lib_reload_events;
 mod lib_reloader;
+pub mod log;
 
-#[cfg(feature = "verbose")]
-mod log;
-
-#[cfg(target_os = "macos")]
-mod codesign;
 extern crate compromise;
-pub use error::HotReloaderError;
+pub use common_define;
 pub use hot_lib_reloader_macro::{define_lib_reloader, hot_module};
 pub use lib_reload_events::{BlockReload, ChangedEvent, LibReloadNotifier, LibReloadObserver};
-pub use lib_reloader::LibReloader;
+//pub use lib_reloader::HotLoadingManager;
+pub use lib_manager;
