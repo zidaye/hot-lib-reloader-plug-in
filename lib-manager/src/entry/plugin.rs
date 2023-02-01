@@ -1,12 +1,13 @@
-use abi_stable::{std_types::RString, StableAbi};
+use abi_stable::std_types::RString;
 use serde::{Deserialize, Serialize};
 
 #[repr(C)]
-#[derive(Debug, Default, Clone, PartialEq, Eq, StableAbi, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, abi_stable::StableAbi, Serialize, Deserialize)]
 pub struct PluginId {
     pub named: RString,
     /// The number of the instance of this Plugin.
     pub path: RString,
+    pub del_flog: bool,
 }
 
 #[macro_export(local_inner_macros)]

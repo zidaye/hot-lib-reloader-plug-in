@@ -23,8 +23,11 @@ macro_rules! impl_plugin_manager {
             reexports::SelfOps,
         };
         use hot_lib_reloader_plug_in::common_define::{
-            utils::path_handler::{
-                find_file_or_dir_in_parent_directories, hash_file, watched_and_loaded_library_paths,
+            utils::{
+                path_handler::{
+                find_file_or_dir_in_parent_directories, hash_file, watched_and_loaded_library_paths,get_lib_name_from_path,
+                },
+                PluginLibEvent,
             },
         };
 
@@ -44,7 +47,7 @@ macro_rules! impl_plugin_manager {
             pub plugin_infos: RHashMap<RString, PluginId>,
             // <lib_name, libload_file_hash>
             pub lib_file_hash: RHashMap<RString, Arc<AtomicU32>>,
-            pub file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<RString>>>>,
+            pub file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
             pub monitor_debounce: Option<Duration>,
         }
 
@@ -94,11 +97,14 @@ macro_rules! impl_plugin_manager {
             }
 
 
-            pub fn subscribe_to_file_changes(&mut self) -> mpsc::Receiver<RString> {
+            pub fn subscribe_to_file_changes(&mut self) -> mpsc::Receiver<(RString, PluginLibEvent)> {
                 log::trace!("subscribe to file change");
                 let (tx, rx) = mpsc::channel();
                 let mut subscribers = self.file_change_subscribers.lock().unwrap();
                 subscribers.push(tx);
+                self.monitor_plugin_dir(self.plugin_dir.clone(),self.file_change_subscribers.clone(), self.monitor_debounce
+                .clone()
+                .unwrap_or_else(|| Duration::from_millis(500))).unwrap();
                 rx
             }
 
@@ -189,6 +195,7 @@ macro_rules! impl_plugin_manager {
                             let plugin_id = PluginId {
                                 named: current_lib_name.as_ref().into(),
                                 path: current_loaded_lib_file.display().to_string().into(),
+                                del_flog: true,
                             };
                             let plugin_ref = load_result?;
                             let plugin_source = match plugin_ref.new()(plugin_id.clone()) {
@@ -221,12 +228,11 @@ macro_rules! impl_plugin_manager {
                 lib_file: impl AsRef<Path>,
                 lib_file_hash: Arc<AtomicU32>,
                 changed: Arc<AtomicBool>,
-                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<RString>>>>,
+                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
                 debounce: Duration,
             ) -> Result<(), HotReloaderError> {
                 let lib_file = lib_file.as_ref().to_path_buf();
                 log::info!("start watching changes of file {}", lib_file.display());
-
                 // File watcher thread. We watch `self.lib_file`, when it changes and we haven't
                 // a pending change still waiting to be loaded, set `self.changed` to true. This
                 // then gets picked up by `self.update`.
@@ -239,18 +245,20 @@ macro_rules! impl_plugin_manager {
                         .watch(&lib_file, RecursiveMode::NonRecursive)
                         .expect("watch lib file");
 
-                    let signal_change = || {
-                        if hash_file(&lib_file) == lib_file_hash.load(Ordering::Acquire)
-                            || changed.load(Ordering::Acquire)
-                        {
-                            // file not changed
-                            return false;
+                    let signal_change = |event: PluginLibEvent| {
+                        match event {
+                            PluginLibEvent::Remove(_) => {},
+                            _ => {
+                                if hash_file(&lib_file) == lib_file_hash.load(Ordering::Acquire)
+                                || changed.load(Ordering::Acquire)
+                                {
+                                    // file not changed
+                                    return false;
+                                }
+                                log::debug!("{lib_file:?} changed",);
+                                changed.store(true, Ordering::Release);
+                            }
                         }
-
-                        log::debug!("{lib_file:?} changed",);
-
-                        changed.store(true, Ordering::Release);
-
                         // inform subscribers
                         let subscribers = file_change_subscribers.lock().unwrap();
                         log::trace!(
@@ -258,42 +266,106 @@ macro_rules! impl_plugin_manager {
                             subscribers.len()
                         );
                         for tx in &*subscribers {
-                            let _ = tx.send(current_lib_name.clone());
+                            let _ = tx.send((current_lib_name.clone(),event.clone()));
                         }
 
                         true
                     };
 
                     loop {
-                        match rx.recv() {
-                            Ok(Chmod(_) | Create(_) | Write(_)) => {
-                                signal_change();
+                        let event = rx.recv();
+                        log::trace!("file change event: {event:?}");
+                        match event {
+                            Ok(DebouncedEvent::Chmod(_) | DebouncedEvent::Write(_)) => {
+                                let plugin_lib_event = PluginLibEvent::Other;
+                                signal_change(plugin_lib_event);
                             }
-                            Ok(Remove(_)) => {
+                            Ok(DebouncedEvent::Remove(path)) => {
                                 // just one hard link removed?
                                 if !lib_file.exists() {
                                     log::debug!(
                                         "{} was removed, trying to watch it again...",
                                         lib_file.display()
                                     );
-                                }
-                                loop {
-                                    if watcher
-                                        .watch(&lib_file, RecursiveMode::NonRecursive)
-                                        .is_ok()
-                                    {
-                                        log::info!("watching {lib_file:?} again after removal");
-                                        signal_change();
-                                        break;
+                                    let plugin_lib_event = PluginLibEvent::Remove(RString::from(path.display().to_string()));
+                                    signal_change(plugin_lib_event);
+                                    loop {
+                                        if watcher
+                                            .watch(&lib_file, RecursiveMode::NonRecursive)
+                                            .is_ok()
+                                        {
+                                            log::info!("watching {lib_file:?} again after removal");
+                                            let plugin_lib_event = PluginLibEvent::Other;
+                                            signal_change(plugin_lib_event);
+                                            break;
+                                        }
+                                        thread::sleep(Duration::from_millis(500));
                                     }
-                                    thread::sleep(Duration::from_millis(500));
                                 }
                             }
                             Ok(change) => {
-                                log::trace!("file change event: {change:?}");
                             }
                             Err(err) => {
                                 log::error!("file watcher error, stopping reload loop: {err}");
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                Ok(())
+            }
+
+            ///  Handle new connected devices
+            fn monitor_plugin_dir(
+                &self,
+                lib_dir: impl AsRef<Path>,
+                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+                debounce: Duration,
+            ) -> Result<(), HotReloaderError> {
+                let lib_dir = lib_dir.as_ref().to_path_buf();
+                log::info!("start watching changes of dir: {}", lib_dir.display());
+
+                // File watcher thread. We watch `self.lib_file`, when it changes and we haven't
+                // a pending change still waiting to be loaded, set `self.changed` to true. This
+                // then gets picked up by `self.update`.
+                thread::spawn(move || {
+                    let (tx, rx) = mpsc::channel();
+                    let mut watcher = watcher(tx, debounce).unwrap();
+                    watcher
+                        .watch(&lib_dir, RecursiveMode::NonRecursive)
+                        .expect("watch lib dir");
+
+                    let signal_change = |event_msg:PathBuf, event: PluginLibEvent| {
+                        let lib_name = if let Some(lib_name) = get_lib_name_from_path(event_msg) {
+                            lib_name
+                        }else {
+                            return false;
+                        };
+                        // inform subscribers
+                        let subscribers = file_change_subscribers.lock().unwrap();
+                        log::trace!(
+                            "sending ChangedEvent::LibdirChanged to {} subscribers: {}",
+                            subscribers.len(), lib_name
+                        );
+                        for tx in &*subscribers {
+                            let _ = tx.send((RString::from(lib_name.clone()), event.clone()));
+                        }
+                        true
+                    };
+
+                    loop {
+                        let event = rx.recv();
+                        log::trace!("plugin lib dir change event: {event:?}");
+                        match event {
+                            // Ok(DebouncedEvent::Create(path)) => {
+                            //     let plugin_lib_event = PluginLibEvent::Create(RString::from(path.display().to_string()));
+                            //     signal_change(path, plugin_lib_event);
+                            // }
+                            Ok(change) => {
+                            }
+                            Err(err) => {
+                                log::error!("dir watcher error, stopping reload loop: {err}");
                                 break;
                             }
                         }
@@ -319,12 +391,16 @@ macro_rules! impl_plugin_manager {
                 loading_path: RString,
                 load_counter: usize,
             ) -> RResult<PluginId, HotReloaderError> {
-                if !self.plugin_mapping.contains_key(plugin_name.as_str()) {
+                if let Some(plugin_id)  = self.plugin_infos.get_mut(plugin_name.clone().into()) {
+                    plugin_id.del_flog = true;
+                    return ROk(plugin_id.clone());
+                } else {
                     let monitor_path = PathBuf::from(monitor_path.as_str());
                     let loading_path = PathBuf::from(loading_path.as_str());
                     let plugin_id = PluginId {
                         named: plugin_name.clone().into(),
                         path: loading_path.display().to_string().into(),
+                        del_flog: true,
                     };
                     let (current_lib_file_hash, current_plugin_source) = if monitor_path.exists() {
                         // We don't load the actual lib because this can get problems e.g. on Windows
@@ -389,27 +465,36 @@ macro_rules! impl_plugin_manager {
 
                     return ROk(plugin_id);
                 }
+                //else {
 
-                RErr(HotReloaderError::LibraryloadAccidentError(
-                    std::format!("Plugin `{}` already exists", plugin_name).into(),
-                ))
+                    // }
+
+                    // RErr(HotReloaderError::LibraryloadAccidentError(
+                    //     std::format!("Plugin `{}` already exists", plugin_name).into(),
+                    // ))
             }
 
-            fn unloaded_plugins(&mut self, plugin_name: &RStr) -> RResult<PluginId, HotReloaderError> {
-                if self.plugin_mapping.contains_key(plugin_name.as_str()) {
-                    let plugin_object = self.plugin_mapping.remove(plugin_name.clone().into());
-                    if let RSome(plugin_object) = plugin_object {
-                        plugin_object.drop_();
-                    }
-                    self.changed_record.remove(plugin_name.clone().into());
-                    self.lib_file_hash.remove(plugin_name.clone().into());
-                    self.plugin_load_counter.remove(plugin_name.clone().into());
-                    self.monitor_lib_file.remove(plugin_name.clone().into());
 
-                    let plugin_id = self.plugin_infos.remove(plugin_name.clone().into());
-                    if let RSome(plugin_id) = plugin_id {
-                        return ROk(plugin_id);
-                    }
+            fn unloaded_plugins(&mut self, plugin_name: &RStr) -> RResult<PluginId, HotReloaderError> {
+                // if self.plugin_mapping.contains_key(plugin_name.as_str()) {
+                //     let plugin_object = self.plugin_mapping.remove(plugin_name.clone().into());
+                //     if let RSome(plugin_object) = plugin_object {
+                //         plugin_object.close();
+                //     }
+                //     self.changed_record.remove(plugin_name.clone().into());
+                //     self.lib_file_hash.remove(plugin_name.clone().into());
+                //     self.plugin_load_counter.remove(plugin_name.clone().into());
+                //     self.monitor_lib_file.remove(plugin_name.clone().into());
+
+                //     let plugin_id = self.plugin_infos.remove(plugin_name.clone().into());
+                //     if let RSome(plugin_id) = plugin_id {
+                //         log::info!("unloaded plugin sucessful: {:?}", plugin_id);
+                //         return ROk(plugin_id);
+                //     }
+                // }
+                if let Some(plugin_id) = self.plugin_infos.get_mut(plugin_name.clone().into()) {
+                    plugin_id.del_flog = false;
+                    return ROk(plugin_id.clone());
                 }
                 RErr(HotReloaderError::LibraryloadAccidentError(
                     std::format!("Plugin `{}` not found", plugin_name).into(),
@@ -422,3 +507,174 @@ macro_rules! impl_plugin_manager {
         }
     };
 }
+
+// use abi_stable::std_types::RString;
+// use std::{
+//     fs,
+//     path::{Path, PathBuf},
+//     sync::{
+//         atomic::{AtomicBool, AtomicU32, Ordering},
+//         mpsc, Arc, Mutex,
+//     },
+//     thread,
+//     time::Duration,
+// };
+// use notify::DebouncedEvent;
+// use common_define::{error::HotReloaderError, utils::{PluginLibEvent, path_handler::{get_lib_name_from_path, watched_and_loaded_library_paths}}};
+// fn monitor_reload(
+//     current_lib_name: RString,
+//     lib_file: impl AsRef<Path>,
+//     lib_file_hash: Arc<AtomicU32>,
+//     changed: Arc<AtomicBool>,
+//     file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+//     debounce: Duration,
+// ) -> Result<(), HotReloaderError> {
+//     let lib_file = lib_file.as_ref().to_path_buf();
+//     log::info!("start watching changes of file {}", lib_file.display());
+
+//     // File watcher thread. We watch `self.lib_file`, when it changes and we haven't
+//     // a pending change still waiting to be loaded, set `self.changed` to true. This
+//     // then gets picked up by `self.update`.
+
+//     thread::spawn(move || {
+//         use notify::DebouncedEvent::*;
+//         use notify::{watcher, DebouncedEvent, RecursiveMode, Watcher};
+//         use common_define::utils::path_handler::hash_file;
+//         let (tx, rx) = mpsc::channel();
+//         let mut watcher = watcher(tx, debounce).unwrap();
+//         watcher
+//             .watch(&lib_file, RecursiveMode::NonRecursive)
+//             .expect("watch lib file");
+
+//         let signal_change = |event: PluginLibEvent| {
+
+//             if hash_file(&lib_file) == lib_file_hash.load(Ordering::Acquire)
+//                 || changed.load(Ordering::Acquire)
+//             {
+//                 // file not changed
+//                 return false;
+//             }
+
+//             log::debug!("{lib_file:?} changed",);
+
+//             changed.store(true, Ordering::Release);
+
+//             // inform subscribers
+//             let subscribers = file_change_subscribers.lock().unwrap();
+//             log::trace!(
+//                 "sending ChangedEvent::LibFileChanged to {} subscribers",
+//                 subscribers.len()
+//             );
+//             for tx in &*subscribers {
+//                 let _ = tx.send((current_lib_name.clone(), event.clone()));
+//             }
+
+//             true
+//         };
+
+//         loop {
+//             let event = rx.recv();
+//             log::trace!("file change event: {event:?}");
+//             match event {
+//                 Ok(Chmod(path) | Write(path)) => {
+//                     let plugin_lib_event = PluginLibEvent::Other;
+//                     signal_change(plugin_lib_event);
+//                 }
+//                 Ok( Create(path)) => {
+//                     let plugin_lib_event = PluginLibEvent::Create(RString::from(path.display().to_string()));
+//                     signal_change(plugin_lib_event);
+//                 }
+//                 Ok(Remove(path)) => {
+//                     // just one hard link removed?
+//                     if !lib_file.exists() {
+//                         log::debug!(
+//                             "{} was removed, trying to watch it again...",
+//                             lib_file.display()
+//                         );
+//                     }
+//                     loop {
+//                         if watcher
+//                             .watch(&lib_file, RecursiveMode::NonRecursive)
+//                             .is_ok()
+//                         {
+//                             log::info!("watching {lib_file:?} again after removal");
+//                             signal_change();
+//                             break;
+//                         }
+//                         thread::sleep(Duration::from_millis(500));
+//                     }
+//                 }
+//                 Ok(change) => {
+//                 }
+//                 Err(err) => {
+//                     log::error!("file watcher error, stopping reload loop: {err}");
+//                     break;
+//                 }
+//             }
+//         }
+//     });
+
+//     Ok(())
+// }
+
+// ///  Handle new connected devices
+// fn monitor_plugin_dir(
+//     lib_dir: impl AsRef<Path>,
+//     file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+//     debounce: Duration,
+// ) -> Result<(), HotReloaderError> {
+//     let lib_dir = lib_dir.as_ref().to_path_buf();
+//     log::info!("start watching changes of dir: {}", lib_dir.display());
+
+//     // File watcher thread. We watch `self.lib_file`, when it changes and we haven't
+//     // a pending change still waiting to be loaded, set `self.changed` to true. This
+//     // then gets picked up by `self.update`.
+
+//     thread::spawn(move || {
+//         use notify::DebouncedEvent::*;
+//         use notify::{watcher, RecursiveMode, Watcher};
+//         use common_define::utils::path_handler::hash_file;
+//         let (tx, rx) = mpsc::channel();
+//         let mut watcher = watcher(tx, debounce).unwrap();
+//         watcher
+//             .watch(&lib_dir, RecursiveMode::NonRecursive)
+//             .expect("watch lib file");
+
+//         let signal_change = |event_msg:PathBuf, event: PluginLibEvent| {
+//             let lib_name = if let Some(lib_name) = get_lib_name_from_path(event_msg) {
+//                 lib_name
+//             }else {
+//                 return false;
+//             };
+//             // inform subscribers
+//             let subscribers = file_change_subscribers.lock().unwrap();
+//             log::trace!(
+//                 "sending ChangedEvent::LibFileChanged to {} subscribers",
+//                 subscribers.len()
+//             );
+//             for tx in &*subscribers {
+//                 let _ = tx.send((RString::from(lib_name), event.clone()));
+//             }
+//             true
+//         };
+
+//         loop {
+//             let event = rx.recv();
+//             log::trace!("plugin lib dir change event: {event:?}");
+//             match event {
+//                 Ok(Create(path)) => {
+//                     let plugin_lib_event = PluginLibEvent::Create(RString::from(path.display().to_string()));
+//                     signal_change(path, plugin_lib_event);
+//                 }
+//                 Ok(change) => {
+//                 }
+//                 Err(err) => {
+//                     log::error!("file watcher error, stopping reload loop: {err}");
+//                     break;
+//                 }
+//             }
+//         }
+//     });
+
+//     Ok(())
+// }

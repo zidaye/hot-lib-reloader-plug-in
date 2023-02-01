@@ -59,7 +59,7 @@ pub(crate) fn generate_lib_loader_items(
                 // update thread that triggers the dylib to be actually updated
                 let _thread = ::std::thread::spawn(move || {
                     loop {
-                        if let Ok(current_lib_name) = change_rx.recv() {
+                        if let Ok((current_lib_name, plugin_event)) = change_rx.recv() {
                             // inform subscribers about about-to-reload
                             __lib_notifier()
                                 .read()
@@ -74,7 +74,34 @@ pub(crate) fn generate_lib_loader_items(
                                         let duration: ::std::time::Duration = first_lock_attempt - ::std::time::Instant::now();
                                         HotLoadingManager::log_info(&format!("...got write lock after {}ms!", duration.as_millis()));
                                     }
-                                    let _ = !lib_loader.update(current_lib_name).expect("hot lib update()");
+                                    match plugin_event {
+                                        PluginLibEvent::Create(path) => {
+                                            let file_mapping =
+                                            watched_and_loaded_library_paths(&lib_loader.plugin_dir, &vec![current_lib_name], 0, true);
+                                            for (current_monitor_path, current_loading_path, plugin_name) in file_mapping {
+                                                if let RErr(e) = lib_loader
+                                                    .loaded_plugins(
+                                                        &RStr::from_str(plugin_name.as_str()),
+                                                        RString::from(current_monitor_path.display().to_string()),
+                                                        RString::from(current_loading_path.display().to_string()),
+                                                        0,
+                                                    )
+                                                    .into()
+                                                {
+                                                    HotLoadingManager::log_info(&format!("load plugin filed: {}", e.to_string()));
+                                                    continue;
+                                                }
+                                            }
+                                        },
+                                        PluginLibEvent::Remove(_) => {
+                                            if let RErr(e) = lib_loader.unloaded_plugins(&RStr::from_str(current_lib_name.as_str())) {
+                                                HotLoadingManager::log_info(&format!("load plugin filed: {}", e.to_string()));
+                                            }
+                                        },
+                                        PluginLibEvent::Other => {
+                                            let _ = !lib_loader.update(current_lib_name).expect("hot lib update()");
+                                        },
+                                    }
                                     break;
                                 }
                                 if first_lock_attempt.is_none() {

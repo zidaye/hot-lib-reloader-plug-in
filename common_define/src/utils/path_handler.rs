@@ -71,3 +71,26 @@ pub fn hash_file(f: impl AsRef<Path>) -> u32 {
         .map(|content| crc32fast::hash(&content))
         .unwrap_or_default()
 }
+
+pub fn get_lib_name_from_path(file: impl AsRef<Path>) -> Option<String> {
+    let file = file.as_ref().to_path_buf();
+    // sort out os dependent file name
+    #[cfg(target_os = "macos")]
+    let (prefix, ext) = ("lib", "dylib");
+    #[cfg(target_os = "linux")]
+    let (prefix, ext) = ("lib", "so");
+    #[cfg(target_os = "windows")]
+    let (prefix, ext) = ("", "dll");
+
+    if let Some(file_name) = file.file_name() {
+        if let Some(file_ext) = file.extension() {
+            let mut file_name = file_name.to_string_lossy().to_string();
+            if file_ext.eq(ext) && file_name.starts_with(prefix) && !file_name.contains("-hot-") {
+                file_name = file_name.replacen(prefix, "", 1);
+                file_name = file_name.replacen(&format!(".{}", ext), "", 1);
+                return Some(file_name);
+            }
+        }
+    }
+    None
+}
