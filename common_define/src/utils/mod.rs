@@ -1,5 +1,3 @@
-
-
 pub mod path_handler;
 
 #[derive(Debug, Clone)]

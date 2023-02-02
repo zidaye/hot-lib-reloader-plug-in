@@ -32,8 +32,9 @@ macro_rules! plugin_object_define {
             abi_stable::declare_root_module_statics! {$prefix_ref}
             const BASE_NAME: &'static str = "plugin";
             const NAME: &'static str = "plugin";
-            const VERSION_STRINGS: abi_stable::sabi_types::VersionStrings = abi_stable::package_version_strings!();
-               // hot_lib_reloader_plug_in::lib_manager::hotlib_version_strings!();
+            const VERSION_STRINGS: abi_stable::sabi_types::VersionStrings =
+                abi_stable::package_version_strings!();
+            // hot_lib_reloader_plug_in::lib_manager::hotlib_version_strings!();
         }
     };
 }
