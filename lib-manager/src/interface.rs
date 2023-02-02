@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::entry::plugin::PluginId;
 use abi_stable::std_types::RHashMap;
 use abi_stable::{
@@ -7,22 +9,19 @@ use abi_stable::{
 };
 use common_define::error::HotReloaderError;
 
-pub type PluginManagerMut<'a> = PluginManager_TO<'a, RMut<'a, ()>>;
-
-#[sabi_trait]
 pub trait PluginManager {
     /// Gets the PluginId of all loaded plugins
     fn loaded_plugins(
         &mut self,
-        plugin_name: &RStr,
-        monitor_path: RString,
-        loading_path: RString,
+        plugin_name: String,
+        monitor_path: String,
+        loading_path: String,
         load_counter: usize,
-    ) -> RResult<PluginId, HotReloaderError>;
+    ) -> Result<PluginId, HotReloaderError>;
 
     /// Gets the PluginId of all loaded plugins
-    fn unloaded_plugins(&mut self, plugin_name: &RStr) -> RResult<PluginId, HotReloaderError>;
+    fn unloaded_plugins(&mut self, plugin_name: String) -> Result<PluginId, HotReloaderError>;
 
     /// Gets the PluginId of all loaded plugins
-    fn get_plugins(&self) -> RHashMap<RString, PluginId>;
+    fn get_plugins(&self) -> HashMap<String, PluginId>;
 }

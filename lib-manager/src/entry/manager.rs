@@ -15,13 +15,13 @@ macro_rules! impl_plugin_manager {
         use abi_stable::{
             library::{lib_header_from_path},
             std_types::{
-                RHashMap,
+                ROk, RErr,
+                RString,
                 ROption::RSome,
-                RResult::{RErr, ROk},
-                RStr, RString,
             },
             reexports::SelfOps,
         };
+        use std::collections::HashMap;
         use hot_lib_reloader_plug_in::common_define::{
             utils::{
                 path_handler::{
@@ -37,17 +37,17 @@ macro_rules! impl_plugin_manager {
         use hot_lib_reloader_plug_in::log;
         #[derive(Default)]
         pub struct HotLoadingManager {
-            pub plugin_mapping: RHashMap<RString, PluginType>,
-            pub plugin_load_counter: RHashMap<RString, usize>,
+            pub plugin_mapping: HashMap<String, PluginType>,
+            pub plugin_load_counter: HashMap<String, usize>,
             pub plugin_dir: PathBuf,
             // <lib_name, libload_file_changed>
-            pub changed_record: RHashMap<RString, Arc<AtomicBool>>,
-            pub monitor_lib_file: RHashMap<RString, PathBuf>,
+            pub changed_record: HashMap<String, Arc<AtomicBool>>,
+            pub monitor_lib_file: HashMap<String, PathBuf>,
             // <lib_name, libload_file_path>
-            pub plugin_infos: RHashMap<RString, PluginId>,
+            pub plugin_infos: HashMap<String, PluginId>,
             // <lib_name, libload_file_hash>
-            pub lib_file_hash: RHashMap<RString, Arc<AtomicU32>>,
-            pub file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+            pub lib_file_hash: HashMap<String, Arc<AtomicU32>>,
+            pub file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(String, PluginLibEvent)>>>>,
             pub monitor_debounce: Option<Duration>,
         }
 
@@ -58,13 +58,13 @@ macro_rules! impl_plugin_manager {
                 monitor_debounce: Option<Duration>,
             ) -> Result<HotLoadingManager, HotReloaderError> {
                 let mut hot_loading_manager = HotLoadingManager {
-                    plugin_mapping: RHashMap::new(),
-                    plugin_load_counter: RHashMap::new(),
+                    plugin_mapping: HashMap::new(),
+                    plugin_load_counter: HashMap::new(),
                     plugin_dir: PathBuf::new(),
-                    changed_record: RHashMap::new(),
-                    monitor_lib_file: RHashMap::new(),
-                    plugin_infos: RHashMap::new(),
-                    lib_file_hash: RHashMap::new(),
+                    changed_record: HashMap::new(),
+                    monitor_lib_file: HashMap::new(),
+                    plugin_infos: HashMap::new(),
+                    lib_file_hash: HashMap::new(),
                     file_change_subscribers: Arc::new(Mutex::new(Vec::new())),
                     monitor_debounce,
                 };
@@ -77,11 +77,11 @@ macro_rules! impl_plugin_manager {
                 let file_mapping =
                     watched_and_loaded_library_paths(&lib_dir, &lib_name_vec, init_load_counter, true);
                 for (current_monitor_path, current_loading_path, plugin_name) in file_mapping {
-                    if let RErr(e) = hot_loading_manager
+                    if let Err(e) = hot_loading_manager
                         .loaded_plugins(
-                            &RStr::from_str(plugin_name.as_str()),
-                            RString::from(current_monitor_path.display().to_string()),
-                            RString::from(current_loading_path.display().to_string()),
+                            plugin_name,
+                            current_monitor_path.display().to_string(),
+                            current_loading_path.display().to_string(),
                             init_load_counter,
                         )
                         .into()
@@ -97,7 +97,7 @@ macro_rules! impl_plugin_manager {
             }
 
 
-            pub fn subscribe_to_file_changes(&mut self) -> mpsc::Receiver<(RString, PluginLibEvent)> {
+            pub fn subscribe_to_file_changes(&mut self) -> mpsc::Receiver<(String, PluginLibEvent)> {
                 log::trace!("subscribe to file change");
                 let (tx, rx) = mpsc::channel();
                 let mut subscribers = self.file_change_subscribers.lock().unwrap();
@@ -138,17 +138,6 @@ macro_rules! impl_plugin_manager {
                 log::info!("reloading lib {current_monitor_lib_file:?}");
 
                 // Close the loaded lib, copy the new lib to a file we can load, then load it.
-
-                if let RSome(plugin_object) = self.plugin_mapping.remove(current_lib_name.as_ref()) {
-                    plugin_object.close();
-                    if let Some(current_loaded_lib_file) = plugin_infos.get(current_lib_name.as_ref()) {
-                        let path = PathBuf::from(current_loaded_lib_file.path.as_str());
-                        if path.exists() {
-                            let _ = fs::remove_file(path);
-                        }
-                    }
-                }
-
                 if let Some(current_monitor_lib_file) = monitor_lib_file.get(current_lib_name.as_ref()) {
                     if current_monitor_lib_file.exists() {
                         let current_load_counter = if let Some(current_load_counter) =
@@ -158,7 +147,6 @@ macro_rules! impl_plugin_manager {
                             *current_load_counter
                         } else {
                             let current_load_counter = 0;
-                            plugin_load_counter.insert(current_lib_name.as_ref().into(), current_load_counter);
                             current_load_counter
                         };
 
@@ -173,6 +161,33 @@ macro_rules! impl_plugin_manager {
                         {
                             log::trace!("copy {current_watched_lib_file:?} -> {current_loaded_lib_file:?}");
                             fs::copy(current_watched_lib_file, &current_loaded_lib_file)?;
+                              // reload plugin lib
+                              let load_result = (|| {
+                                let header = lib_header_from_path(&current_loaded_lib_file)?;
+                                header.init_root_module::<PluginObjectRef>()
+                            })();
+                            let plugin_id = PluginId {
+                                named: current_lib_name.as_ref().into(),
+                                path: current_loaded_lib_file.display().to_string().into(),
+                                del_flog: false,
+                            };
+                            let plugin_ref = load_result?;
+                            let plugin_source = match plugin_ref.new()(plugin_id.clone()) {
+                                ROk(plugin_source) => plugin_source,
+                                RErr(e) => {
+                                    return Err(HotReloaderError::from(e));
+                                }
+                            };
+                            if let Some(plugin_object) = self.plugin_mapping.remove(current_lib_name.as_ref()) {
+                                plugin_object.close();
+                                if let Some(current_loaded_lib_file) = plugin_infos.get(current_lib_name.as_ref()) {
+                                    let path = PathBuf::from(current_loaded_lib_file.path.as_str());
+                                    if path.exists() {
+                                        let _ = fs::remove_file(path);
+                                    }
+                                }
+                            }
+                            plugin_load_counter.insert(current_lib_name.as_ref().into(), current_load_counter);
                             let current_lib_file_hash_value = hash_file(current_loaded_lib_file);
                             if let Some(current_lib_file_hash) =
                                 self.lib_file_hash.get(current_lib_name.as_ref())
@@ -187,24 +202,6 @@ macro_rules! impl_plugin_manager {
                                 self.changed_record
                                     .insert(current_lib_name.as_ref().into(), current_changed);
                             }
-                            // reload plugin lib
-                            let load_result = (|| {
-                                let header = lib_header_from_path(&current_loaded_lib_file)?;
-                                header.init_root_module::<PluginObjectRef>()
-                            })();
-                            let plugin_id = PluginId {
-                                named: current_lib_name.as_ref().into(),
-                                path: current_loaded_lib_file.display().to_string().into(),
-                                del_flog: true,
-                            };
-                            let plugin_ref = load_result?;
-                            let plugin_source = match plugin_ref.new()(plugin_id.clone()) {
-                                ROk(plugin_source) => plugin_source,
-                                RErr(e) => {
-                                    return Err(HotReloaderError::from(e));
-                                }
-                            };
-
                             self.plugin_mapping.insert(
                                 current_lib_name.as_ref().into(),
                                 plugin_source,
@@ -224,11 +221,11 @@ macro_rules! impl_plugin_manager {
 
             fn monitor_reload(
                 &self,
-                current_lib_name: RString,
+                current_lib_name: String,
                 lib_file: impl AsRef<Path>,
                 lib_file_hash: Arc<AtomicU32>,
                 changed: Arc<AtomicBool>,
-                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(String, PluginLibEvent)>>>>,
                 debounce: Duration,
             ) -> Result<(), HotReloaderError> {
                 let lib_file = lib_file.as_ref().to_path_buf();
@@ -287,7 +284,7 @@ macro_rules! impl_plugin_manager {
                                         "{} was removed, trying to watch it again...",
                                         lib_file.display()
                                     );
-                                    let plugin_lib_event = PluginLibEvent::Remove(RString::from(path.display().to_string()));
+                                    let plugin_lib_event = PluginLibEvent::Remove(path.display().to_string());
                                     signal_change(plugin_lib_event);
                                     loop {
                                         if watcher
@@ -320,7 +317,7 @@ macro_rules! impl_plugin_manager {
             fn monitor_plugin_dir(
                 &self,
                 lib_dir: impl AsRef<Path>,
-                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(RString, PluginLibEvent)>>>>,
+                file_change_subscribers: Arc<Mutex<Vec<mpsc::Sender<(String, PluginLibEvent)>>>>,
                 debounce: Duration,
             ) -> Result<(), HotReloaderError> {
                 let lib_dir = lib_dir.as_ref().to_path_buf();
@@ -349,7 +346,7 @@ macro_rules! impl_plugin_manager {
                             subscribers.len(), lib_name
                         );
                         for tx in &*subscribers {
-                            let _ = tx.send((RString::from(lib_name.clone()), event.clone()));
+                            let _ = tx.send((lib_name.clone(), event.clone()));
                         }
                         true
                     };
@@ -358,10 +355,10 @@ macro_rules! impl_plugin_manager {
                         let event = rx.recv();
                         log::trace!("plugin lib dir change event: {event:?}");
                         match event {
-                            // Ok(DebouncedEvent::Create(path)) => {
-                            //     let plugin_lib_event = PluginLibEvent::Create(RString::from(path.display().to_string()));
-                            //     signal_change(path, plugin_lib_event);
-                            // }
+                            Ok(DebouncedEvent::Create(path)) => {
+                                let plugin_lib_event = PluginLibEvent::Create(path.display().to_string());
+                                signal_change(path, plugin_lib_event);
+                            }
                             Ok(change) => {
                             }
                             Err(err) => {
@@ -386,28 +383,28 @@ macro_rules! impl_plugin_manager {
         impl PluginManager for HotLoadingManager {
             fn loaded_plugins(
                 &mut self,
-                plugin_name: &RStr,
-                monitor_path: RString,
-                loading_path: RString,
+                plugin_name: String,
+                monitor_path: String,
+                loading_path: String,
                 load_counter: usize,
-            ) -> RResult<PluginId, HotReloaderError> {
-                if let Some(plugin_id)  = self.plugin_infos.get_mut(plugin_name.clone().into()) {
-                    plugin_id.del_flog = true;
-                    return ROk(plugin_id.clone());
+            ) -> Result<PluginId, HotReloaderError> {
+                if let Some(plugin_id)  = self.plugin_infos.get_mut(&plugin_name) {
+                    plugin_id.del_flog = false;
+                    return Ok(plugin_id.clone());
                 } else {
                     let monitor_path = PathBuf::from(monitor_path.as_str());
                     let loading_path = PathBuf::from(loading_path.as_str());
                     let plugin_id = PluginId {
-                        named: plugin_name.clone().into(),
+                        named: RString::from(plugin_name.clone()),
                         path: loading_path.display().to_string().into(),
-                        del_flog: true,
+                        del_flog: false,
                     };
                     let (current_lib_file_hash, current_plugin_source) = if monitor_path.exists() {
                         // We don't load the actual lib because this can get problems e.g. on Windows
                         // where a file lock would be held, preventing the lib from changing later.
                         log::debug!("copying {monitor_path:?} -> {loading_path:?}");
                         if let Err(e) = fs::copy(&monitor_path, &loading_path) {
-                            return RErr(HotReloaderError::from(e));
+                            return Err(HotReloaderError::from(e));
                         }
                         let load_result = (|| {
                             let header = lib_header_from_path(&loading_path)?;
@@ -415,26 +412,26 @@ macro_rules! impl_plugin_manager {
                         })();
                         let plugin_ref = match load_result {
                             Ok(plugin_ref) => plugin_ref,
-                            Err(e) => return RErr(HotReloaderError::from(e)),
+                            Err(e) => return Err(HotReloaderError::from(e)),
                         };
                         let lib_file_hash = hash_file(&loading_path);
                         let plugin_source = match plugin_ref.new()(plugin_id.clone()) {
                             ROk(plugin_source) => plugin_source,
                             RErr(e) => {
-                                return RErr(HotReloaderError::from(e));
+                                return Err(HotReloaderError::from(e));
                             }
                         };
                         (lib_file_hash, plugin_source)
                     } else {
                         log::debug!("library {monitor_path:?} does not yet exist");
-                        return RErr(HotReloaderError::LibraryNotLoaded);
+                        return Err(HotReloaderError::LibraryNotLoaded);
                     };
 
                     let current_lib_file_hash = Arc::new(AtomicU32::new(current_lib_file_hash));
                     let current_changed = Arc::new(AtomicBool::new(false));
 
                     if let Err(e) = self.monitor_reload(
-                        plugin_name.clone().into(),
+                        plugin_name.clone(),
                         monitor_path.clone(),
                         current_lib_file_hash.clone(),
                         current_changed.clone(),
@@ -443,27 +440,27 @@ macro_rules! impl_plugin_manager {
                             .clone()
                             .unwrap_or_else(|| Duration::from_millis(500)),
                     ) {
-                        return RErr(e);
+                        return Err(e);
                     }
 
 
                     self.plugin_infos
-                        .insert(plugin_name.clone().into(), plugin_id.clone());
+                        .insert(plugin_name.clone(), plugin_id.clone());
                     self.plugin_mapping.insert(
-                        plugin_name.clone().into_::<RString>(),
+                        plugin_name.clone(),
                         current_plugin_source,
                     );
 
                     self.changed_record
-                        .insert(plugin_name.clone().into(), current_changed);
+                        .insert(plugin_name.clone(), current_changed);
                     self.lib_file_hash
-                        .insert(plugin_name.clone().into(), current_lib_file_hash);
+                        .insert(plugin_name.clone(), current_lib_file_hash);
                     self.plugin_load_counter
-                        .insert(plugin_name.clone().into(), load_counter);
+                        .insert(plugin_name.clone(), load_counter);
                     self.monitor_lib_file
-                        .insert(plugin_name.clone().into(), monitor_path);
+                        .insert(plugin_name, monitor_path);
 
-                    return ROk(plugin_id);
+                    return Ok(plugin_id);
                 }
                 //else {
 
@@ -475,7 +472,7 @@ macro_rules! impl_plugin_manager {
             }
 
 
-            fn unloaded_plugins(&mut self, plugin_name: &RStr) -> RResult<PluginId, HotReloaderError> {
+            fn unloaded_plugins(&mut self, plugin_name: String) -> Result<PluginId, HotReloaderError> {
                 // if self.plugin_mapping.contains_key(plugin_name.as_str()) {
                 //     let plugin_object = self.plugin_mapping.remove(plugin_name.clone().into());
                 //     if let RSome(plugin_object) = plugin_object {
@@ -492,16 +489,16 @@ macro_rules! impl_plugin_manager {
                 //         return ROk(plugin_id);
                 //     }
                 // }
-                if let Some(plugin_id) = self.plugin_infos.get_mut(plugin_name.clone().into()) {
-                    plugin_id.del_flog = false;
-                    return ROk(plugin_id.clone());
+                if let Some(plugin_id) = self.plugin_infos.get_mut(&plugin_name) {
+                    plugin_id.del_flog = true;
+                    return Ok(plugin_id.clone());
                 }
-                RErr(HotReloaderError::LibraryloadAccidentError(
+                Err(HotReloaderError::LibraryloadAccidentError(
                     std::format!("Plugin `{}` not found", plugin_name).into(),
                 ))
             }
 
-            fn get_plugins(&self) -> RHashMap<RString, PluginId> {
+            fn get_plugins(&self) -> HashMap<String, PluginId> {
                 self.plugin_infos.clone()
             }
         }

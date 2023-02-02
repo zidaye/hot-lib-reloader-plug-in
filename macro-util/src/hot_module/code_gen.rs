@@ -79,11 +79,11 @@ pub(crate) fn generate_lib_loader_items(
                                             let file_mapping =
                                             watched_and_loaded_library_paths(&lib_loader.plugin_dir, &vec![current_lib_name], 0, true);
                                             for (current_monitor_path, current_loading_path, plugin_name) in file_mapping {
-                                                if let RErr(e) = lib_loader
+                                                if let Err(e) = lib_loader
                                                     .loaded_plugins(
-                                                        &RStr::from_str(plugin_name.as_str()),
-                                                        RString::from(current_monitor_path.display().to_string()),
-                                                        RString::from(current_loading_path.display().to_string()),
+                                                        plugin_name,
+                                                        current_monitor_path.display().to_string(),
+                                                        current_loading_path.display().to_string(),
                                                         0,
                                                     )
                                                     .into()
@@ -94,12 +94,15 @@ pub(crate) fn generate_lib_loader_items(
                                             }
                                         },
                                         PluginLibEvent::Remove(_) => {
-                                            if let RErr(e) = lib_loader.unloaded_plugins(&RStr::from_str(current_lib_name.as_str())) {
+                                            if let Err(e) = lib_loader.unloaded_plugins(current_lib_name) {
                                                 HotLoadingManager::log_info(&format!("load plugin filed: {}", e.to_string()));
                                             }
                                         },
                                         PluginLibEvent::Other => {
-                                            let _ = !lib_loader.update(current_lib_name).expect("hot lib update()");
+                                            match lib_loader.update(current_lib_name) {
+                                                Ok(_) => HotLoadingManager::log_info("relaod finish..."),
+                                                Err(e) => HotLoadingManager::log_info(format!("relaod failed cause by {:?} ...", e)),
+                                            }
                                         },
                                     }
                                     break;
