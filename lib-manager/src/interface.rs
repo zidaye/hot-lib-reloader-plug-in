@@ -1,12 +1,6 @@
 use std::collections::HashMap;
 
 use crate::entry::plugin::PluginId;
-use abi_stable::std_types::RHashMap;
-use abi_stable::{
-    sabi_trait,
-    sabi_types::RMut,
-    std_types::{RResult, RStr, RString},
-};
 use common_define::error::HotReloaderError;
 
 pub trait PluginManager {
