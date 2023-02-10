@@ -14,13 +14,13 @@ log = "0.4.17"
 notify = "^4"
 common_define = {path = "./common_define"}
 
-compromise = {path = "./compromise"}
+# compromise = {path = "./compromise"}
 [dev-dependencies]
 env_logger = "^0.9"
 
 [workspace]
 resolver = "2"
-members = ["macro-util", "compromise", "lib-manager", "common_define"]
+members = ["macro-util", "lib-manager", "common_define"]
 
 
 

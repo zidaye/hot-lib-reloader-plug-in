@@ -31,12 +31,14 @@ pub(crate) fn generate_lib_loader_items(
             // Make sure that LIB_LOADER_INIT ran and the change messages are
             // live, otherwise we would not get lib updates if none of the hot
             // functions are called.
-            let _ = __lib_loader();
+            let _ = __lib_loader(None, None);
             __lib_notifier()
                 .write()
                 .expect("write lock notifier")
                 .subscribe()
         }
+
+      
 
         static mut LIB_LOADER: Option<::std::sync::Arc<::std::sync::Mutex<HotLoadingManager>>> = None;
         static LIB_LOADER_INIT: ::std::sync::Once = ::std::sync::Once::new();
@@ -46,10 +48,20 @@ pub(crate) fn generate_lib_loader_items(
         // for simple queries
         static WAS_UPDATED: ::std::sync::atomic::AtomicBool = ::std::sync::atomic::AtomicBool::new(false);
 
-        fn __lib_loader() -> ::std::sync::Arc<::std::sync::Mutex<HotLoadingManager>> {
-
+        fn __lib_loader(init_lib_dir: Option<String>, init_lib_name: Option<String>) -> ::std::sync::Arc<::std::sync::Mutex<HotLoadingManager>> {
+            let init_lib_dir = if let Some(init_lib_dir) = init_lib_dir {
+                init_lib_dir
+            }else {
+                #lib_dir.to_string()
+            };
+    
+            let init_lib_name = if let Some(init_lib_name) = init_lib_name {
+                init_lib_name
+            }else {
+                #lib_name.to_string()
+            };
             LIB_LOADER_INIT.call_once(|| {
-                let mut lib_loader = HotLoadingManager::new(#lib_dir, #lib_name, Some(::std::time::Duration::from_millis(#file_watch_debounce_ms)))
+                let mut lib_loader = HotLoadingManager::new(init_lib_dir, init_lib_name, Some(::std::time::Duration::from_millis(#file_watch_debounce_ms)))
                     .expect("failed to create hot reload loader");
 
                 let change_rx = lib_loader.subscribe_to_file_changes();
@@ -195,7 +207,7 @@ pub(crate) fn gen_hot_module_function_for(
     );
     let block = syn::parse_quote! {
         {
-            let lib_loader = __lib_loader();
+            let lib_loader = __lib_loader(None, None);
             let lib_loader = lib_loader.read().expect("lib loader RwLock read failed");
             let sym = unsafe {
                 lib_loader

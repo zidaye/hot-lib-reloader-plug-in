@@ -431,7 +431,7 @@ mod lib_reload_events;
 mod lib_reloader;
 pub mod log;
 
-extern crate compromise;
+//extern crate compromise;
 pub use common_define;
 pub use hot_lib_reloader_macro::{define_lib_reloader, hot_module};
 pub use lib_reload_events::{BlockReload, ChangedEvent, LibReloadNotifier, LibReloadObserver};

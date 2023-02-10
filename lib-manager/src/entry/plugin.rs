@@ -12,7 +12,7 @@ pub struct PluginId {
 
 #[macro_export(local_inner_macros)]
 macro_rules! plugin_object_define {
-    ($trait_:ident, $prefix_ref:ident, $plugin_type:ident) => {
+    ($prefix_ref:ident, $plugin_type:ident) => {
         use abi_stable::sabi_trait::reexports::__sabi_re::RBox;
         use abi_stable::std_types::RResult;
         use abi_stable::utils;

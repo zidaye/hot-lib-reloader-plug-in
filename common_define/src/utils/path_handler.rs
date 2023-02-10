@@ -21,6 +21,9 @@ pub fn watched_and_loaded_library_paths(
     #[cfg(target_os = "windows")]
     let (prefix, ext) = ("", "dll");
     for lib_name in lib_name_vec {
+        if lib_name.as_ref().is_empty() {
+            continue;
+        }
         let lib_name = if need_prefix {
             format!("{prefix}{}", lib_name.as_ref())
         } else {

@@ -37,7 +37,7 @@ macro_rules! impl_plugin_manager {
         use hot_lib_reloader_plug_in::log;
         #[derive(Default)]
         pub struct HotLoadingManager {
-            pub plugin_mapping: HashMap<String, PluginType>,
+            pub plugin_mapping: HashMap<String, Arc<Mutex<PluginType>>>,
             pub plugin_load_counter: HashMap<String, usize>,
             pub plugin_dir: PathBuf,
             // <lib_name, libload_file_changed>
@@ -179,7 +179,7 @@ macro_rules! impl_plugin_manager {
                                 }
                             };
                             if let Some(plugin_object) = self.plugin_mapping.remove(current_lib_name.as_ref()) {
-                                plugin_object.close();
+                                plugin_object.lock().map_err(|e| HotReloaderError::LibraryloadAccidentError(RString::from(e.to_string())))?.close();
                                 if let Some(current_loaded_lib_file) = plugin_infos.get(current_lib_name.as_ref()) {
                                     let path = PathBuf::from(current_loaded_lib_file.path.as_str());
                                     if path.exists() {
@@ -204,7 +204,7 @@ macro_rules! impl_plugin_manager {
                             }
                             self.plugin_mapping.insert(
                                 current_lib_name.as_ref().into(),
-                                plugin_source,
+                                Arc::new(Mutex::new(plugin_source)),
                             );
                             self.plugin_infos.insert(
                                 current_lib_name.as_ref().into(),
@@ -448,7 +448,7 @@ macro_rules! impl_plugin_manager {
                         .insert(plugin_name.clone(), plugin_id.clone());
                     self.plugin_mapping.insert(
                         plugin_name.clone(),
-                        current_plugin_source,
+                        Arc::new(Mutex::new(current_plugin_source)),
                     );
 
                     self.changed_record
